@@ -10,10 +10,9 @@
 НИУ ВШЭ, МИЭМ, 2026
 """
 
-from pygost.gost34112012 import GOST34112012256
+from gostcrypto import gosthash
 import secrets
 import os
-
 
 # ============================================================
 # ПАРАМЕТРЫ ЭЛЛИПТИЧЕСКОЙ КРИВОЙ (256 бит)
@@ -26,14 +25,24 @@ curve_q = 1157920892103562487626974469494075735299969552241357603424222590610685
 
 Px = 48439561293906451759052585252797914202762949526041747995844080717082404635286
 Py = 36134250956749795798585127919587881956611106672985015071877198253568414405109
+
 BASE_POINT = (Px, Py)
 
+# ============================================================
+# ХЭШ-ФУНКЦИЯ ГОСТ 34.11-2012 (Streebog-256)
+# ============================================================
+
+def hash_message(message: bytes) -> int:
+    """Вычисляет хэш-код по ГОСТ Р 34.11-2012 (Streebog-256)"""
+    h = gosthash.new(data=message, hash_type='streebog256').digest()
+    return int.from_bytes(h, byteorder="big")
 
 # ============================================================
 # МАТЕМАТИЧЕСКИЕ ФУНКЦИИ
 # ============================================================
 
 def gcd_extended(a, b):
+    """Расширенный алгоритм Евклида"""
     if a == 0:
         return b, 0, 1
     gcd, x1, y1 = gcd_extended(b % a, a)
@@ -41,92 +50,73 @@ def gcd_extended(a, b):
     y = x1
     return gcd, x, y
 
-
 def mod_inv(x, m):
+    """Обратный элемент по модулю m"""
     gcd, inv, _ = gcd_extended(x % m, m)
     if gcd != 1:
         raise ValueError("Обратный элемент не существует")
     return inv % m
 
-
 # ============================================================
-# ОПЕРАЦИИ С ТОЧКАМИ
+# ОПЕРАЦИИ С ТОЧКАМИ ЭЛЛИПТИЧЕСКОЙ КРИВОЙ
 # ============================================================
 
 def point_double(P):
+    """Удвоение точки эллиптической кривой"""
     if P is None:
         return None
-
     x1, y1 = P
-
     if y1 % curve_p == 0:
         return None
-
     lam = (3 * x1 * x1 + curve_a) * mod_inv(2 * y1, curve_p) % curve_p
     x3 = (lam * lam - 2 * x1) % curve_p
     y3 = (lam * (x1 - x3) - y1) % curve_p
-
     return (x3, y3)
 
-
 def point_add(P1, P2):
+    """Сложение двух точек эллиптической кривой"""
     if P1 is None:
         return P2
     if P2 is None:
         return P1
-
     x1, y1 = P1
     x2, y2 = P2
-
     if x1 == x2:
         if (y1 + y2) % curve_p == 0:
             return None
         return point_double(P1)
-
     lam = (y2 - y1) * mod_inv(x2 - x1, curve_p) % curve_p
     x3 = (lam * lam - x1 - x2) % curve_p
     y3 = (lam * (x1 - x3) - y1) % curve_p
-
     return (x3, y3)
 
-
 def point_mul(k, P):
+    """Умножение точки на число (двоичный метод)"""
     result = None
     addend = P
-
     while k > 0:
         if k & 1:
             result = point_add(result, addend)
         addend = point_double(addend)
         k >>= 1
-
     return result
-
-
-# ============================================================
-# ХЭШ-ФУНКЦИЯ ГОСТ 34.11-2012
-# ============================================================
-
-def hash_message(message: bytes) -> int:
-    h = GOST34112012256(message).digest()
-    return int.from_bytes(h, byteorder="big")
-
 
 # ============================================================
 # ГЕНЕРАЦИЯ КЛЮЧЕЙ
 # ============================================================
 
 def generate_keys():
+    """Генерация ключевой пары (секретный и открытый ключи)"""
     d = secrets.randbelow(curve_q - 1) + 1
     Q = point_mul(d, BASE_POINT)
     return d, Q
-
 
 # ============================================================
 # ПОДПИСЬ
 # ============================================================
 
 def sign(message: bytes, d: int):
+    """Формирование электронной цифровой подписи по ГОСТ Р 34.10-2012"""
     h = hash_message(message)
     e = h % curve_q
     if e == 0:
@@ -137,25 +127,21 @@ def sign(message: bytes, d: int):
         C = point_mul(k, BASE_POINT)
         if C is None:
             continue
-
         r = C[0] % curve_q
         if r == 0:
             continue
-
         s = (r * d + k * e) % curve_q
         if s == 0:
             continue
-
         return (r, s)
-
 
 # ============================================================
 # ПРОВЕРКА ПОДПИСИ
 # ============================================================
 
 def verify(message: bytes, signature, Q):
+    """Проверка электронной цифровой подписи по ГОСТ Р 34.10-2012"""
     r, s = signature
-
     if not (0 < r < curve_q and 0 < s < curve_q):
         return False
 
@@ -170,17 +156,16 @@ def verify(message: bytes, signature, Q):
 
     C1 = point_mul(z1, BASE_POINT)
     C2 = point_mul(z2, Q)
-
     C = point_add(C1, C2)
+
     if C is None:
         return False
 
     R = C[0] % curve_q
     return R == r
 
-
 # ============================================================
-# МЕНЮ
+# КОНСОЛЬНОЕ МЕНЮ
 # ============================================================
 
 def main():
@@ -188,13 +173,17 @@ def main():
     public_key = None
 
     while True:
-        print("\nГОСТ Р 34.10-2012")
+        print("\n" + "=" * 50)
+        print("ГОСТ Р 34.10-2012")
+        print("Электронная цифровая подпись")
+        print("=" * 50)
         print("1. Сгенерировать ключи")
         print("2. Подписать файл")
         print("3. Проверить подпись")
         print("0. Выход")
+        print("-" * 50)
 
-        choice = input("Выбор: ")
+        choice = input("Выбор: ").strip()
 
         if choice == "1":
             private_key, public_key = generate_keys()
@@ -202,46 +191,54 @@ def main():
                 f.write(str(private_key))
             with open("public_key.txt", "w") as f:
                 f.write(f"{public_key[0]}\n{public_key[1]}")
-            print("Ключи сгенерированы и сохранены.")
+            print("\n✅ Ключи сгенерированы и сохранены.")
+            print(f"   Секретный ключ (первые 20 символов): {str(private_key)[:20]}...")
+            print(f"   Открытый ключ Q = (x, y)")
 
         elif choice == "2":
             if private_key is None:
-                print("Сначала сгенерируйте ключи.")
+                print("\n❌ Сначала сгенерируйте ключи (пункт 1).")
                 continue
-
-            filename = input("Имя файла: ")
+            filename = input("Имя файла для подписи: ").strip()
+            if not os.path.exists(filename):
+                print(f"❌ Файл {filename} не найден.")
+                continue
             with open(filename, "rb") as f:
                 data = f.read()
-
             signature = sign(data, private_key)
-
             with open("signature.sig", "w") as f:
                 f.write(f"{signature[0]}\n{signature[1]}")
-
-            print("Подпись сформирована.")
+            print(f"\n✅ Подпись сформирована и сохранена в signature.sig")
+            print(f"   r = {signature[0]}")
+            print(f"   s = {signature[1]}")
 
         elif choice == "3":
             if public_key is None:
-                print("Сначала сгенерируйте ключи.")
+                print("\n❌ Сначала сгенерируйте ключи (пункт 1).")
                 continue
-
-            filename = input("Имя файла: ")
+            filename = input("Имя файла для проверки: ").strip()
+            if not os.path.exists(filename):
+                print(f"❌ Файл {filename} не найден.")
+                continue
+            if not os.path.exists("signature.sig"):
+                print("❌ Файл с подписью signature.sig не найден.")
+                continue
             with open(filename, "rb") as f:
                 data = f.read()
-
             with open("signature.sig", "r") as f:
-                r = int(f.readline())
-                s = int(f.readline())
-
+                r = int(f.readline().strip())
+                s = int(f.readline().strip())
             if verify(data, (r, s), public_key):
-                print("Подпись верна.")
+                print("\n✅ ПОДПИСЬ ВЕРНА")
             else:
-                print("Подпись неверна.")
+                print("\n❌ ПОДПИСЬ НЕВЕРНА")
 
         elif choice == "0":
+            print("\nДо свидания!")
             break
 
+        else:
+            print("\n❌ Неверный выбор. Попробуйте снова.")
 
 if __name__ == "__main__":
     main()
-
